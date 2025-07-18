@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: streamlit-form-automation
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run main.py --server.port 10000
+    envVars:
+      - key: PORT
+        value: 10000
