@@ -3,6 +3,7 @@ import pandas as pd
 import time
 import threading
 import tempfile
+import queue
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -86,34 +87,33 @@ def submit_google_form(form_url, data_row, delay):
         return True
 
     except Exception as e:
-        st.error(f"❌ Error submitting form: {e}")
-        return False
+        return f"❌ Error submitting form: {e}"
 
 
-def automation_process(df, form_url, delay, start_row, end_row):
+def automation_process(df, form_url, delay, start_row, end_row, status_queue):
     global stop_flag, last_submitted_row
 
     for index in range(start_row - 1, end_row):
         if stop_flag:
-            st.warning("🛑 Automation stopped by user.")
+            status_queue.put(("warning", "🛑 Automation stopped by user."))
             break
 
-        st.info(f"⏳ Submitting Row {index + 1} ...")
+        status_queue.put(("info", f"⏳ Submitting Row {index + 1} ..."))
         row = df.iloc[index]
 
-        success = submit_google_form(form_url, row.tolist(), delay)
-        if success:
+        result = submit_google_form(form_url, row.tolist(), delay)
+        if result is True:
             last_submitted_row = index + 1
-            st.success(f"✅ Row {index + 1} submitted successfully.")
+            status_queue.put(("success", f"✅ Row {index + 1} submitted successfully."))
         else:
-            st.error(f"❌ Error at Row {index + 1}. Stopping.")
+            status_queue.put(("error", f"{result}"))
             break
 
     if not stop_flag and last_submitted_row > 0:
-        st.balloons()
-        st.success(f"🎉 Finished. Last submitted row: {last_submitted_row}")
+        status_queue.put(("balloons", None))
+        status_queue.put(("success", f"🎉 Finished. Last submitted row: {last_submitted_row}"))
     elif last_submitted_row == 0:
-        st.warning("⚠️ No rows were submitted.")
+        status_queue.put(("warning", "⚠️ No rows were submitted."))
 
 
 def main():
@@ -135,19 +135,37 @@ def main():
             start_row = st.number_input("🔢 Start Row", min_value=1, max_value=total_rows, value=1)
             end_row = st.number_input("🔚 End Row", min_value=start_row, max_value=total_rows, value=total_rows)
 
+            if "status_queue" not in st.session_state:
+                st.session_state.status_queue = queue.Queue()
+
             start_button = st.button("🚀 Start Automation")
             stop_button = st.button("🛑 Stop Automation")
 
             if start_button:
                 stop_flag = False
                 last_submitted_row = 0
-                thread = threading.Thread(target=automation_process, args=(df, form_url, delay, start_row, end_row))
+                thread = threading.Thread(target=automation_process,
+                                          args=(df, form_url, delay, start_row, end_row, st.session_state.status_queue))
                 thread.start()
 
             if stop_button:
                 stop_flag = True
                 st.warning("🛑 Stop signal sent.")
                 st.info(f"⏹ Last submitted row: {last_submitted_row}")
+
+            # Poll queue for messages
+            while not st.session_state.status_queue.empty():
+                level, message = st.session_state.status_queue.get()
+                if level == "success":
+                    st.success(message)
+                elif level == "info":
+                    st.info(message)
+                elif level == "warning":
+                    st.warning(message)
+                elif level == "error":
+                    st.error(message)
+                elif level == "balloons":
+                    st.balloons()
 
         except Exception as e:
             st.error(f"❌ Failed to read Excel file: {e}")
